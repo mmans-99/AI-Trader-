@@ -1,24 +1,18 @@
 import os, json, requests, datetime, re
 
 # --- 1. Load Configuration (with # support) ---
-persona_choice = "Aggressive Growth" # Default
+persona_choice = "Aggressive Growth"
 try:
     with open("config.json", "r") as f:
         lines = f.readlines()
-        
     clean_lines = []
     for line in lines:
-        # Remove everything after a hashtag (#)
-        if "#" in line:
-            line = line.split("#")[0]
-        # Keep the line if it's not completely empty
-        if line.strip():
-            clean_lines.append(line)
-            
+        if "#" in line: line = line.split("#")[0]
+        if line.strip(): clean_lines.append(line)
     config = json.loads("".join(clean_lines))
     persona_choice = config.get("persona", "Aggressive Growth")
-except Exception as e:
-    print(f"Could not read config.json, using default. Error: {e}")
+except Exception:
+    pass
 
 PERSONAS = {
     "Aggressive Growth": "an Aggressive Growth trader who loves high volatility and tech stocks.",
@@ -28,7 +22,6 @@ PERSONAS = {
 }
 persona = PERSONAS.get(persona_choice, PERSONAS["Aggressive Growth"])
 
-# --- 2. Configuration ---
 ALL_SYMBOLS = [
     "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "AMD", "NFLX", "CRM",
     "ADBE", "INTC", "QCOM", "AVGO", "COST", "PEP", "KO", "WMT", "JPM", "BAC",
@@ -39,7 +32,7 @@ ALPACA_SECRET = os.environ["ALPACA_SECRET"]
 GEMINI_KEY = os.environ["GEMINI_KEY"]
 headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
 
-# --- 3. Fetch Market Data ---
+# --- Fetch Market Data ---
 print("Fetching market data...")
 prices = {}
 for sym in ALL_SYMBOLS:
@@ -50,8 +43,7 @@ for sym in ALL_SYMBOLS:
     except:
         pass
 
-# --- 4. Get Account & Live Positions ---
-print("Fetching account and positions...")
+# --- Get Account & Live Positions ---
 acct_raw = requests.get("https://paper-api.alpaca.markets/v2/account", headers=headers).json()
 positions_raw = requests.get("https://paper-api.alpaca.markets/v2/positions", headers=headers).json()
 
@@ -62,8 +54,10 @@ portfolio_summary = {
 }
 
 current_positions = []
+held_symbols = []
 if isinstance(positions_raw, list):
     for p in positions_raw:
+        held_symbols.append(p["symbol"])
         current_positions.append({
             "symbol": p["symbol"],
             "qty": p["qty"],
@@ -73,14 +67,12 @@ if isinstance(positions_raw, list):
             "unrealized_pl": round(float(p["unrealized_pl"]), 2)
         })
 
-# --- 5. Extract Recent Memory for "Learning" ---
-print("Reading recent memory...")
+# --- Extract Recent Memory ---
 recent_history = []
 if os.path.exists("log.json"):
     try:
         with open("log.json", "r") as f:
             past_logs = json.load(f)
-            # Grab the last 3 decisions to avoid token bloat
             for past in past_logs[:3]:
                 if "decision" in past and past["decision"]["action"] != "hold":
                     recent_history.append({
@@ -88,11 +80,23 @@ if os.path.exists("log.json"):
                         "symbol": past["decision"].get("symbol"),
                         "reason": past["decision"].get("reason")
                     })
-    except Exception as e:
-        print(f"Could not read memory: {e}")
+    except Exception:
+        pass
 
-# --- 6. Find Best FREE Model ---
-print("Finding best available Gemini model...")
+# --- OPTIMIZATION: Filter prices to keep the prompt small ---
+# Only send the AI the stocks it owns + the 5 biggest winners + 5 biggest losers
+valid_prices = {k: v for k, v in prices.items() if v > 0}
+sorted_by_price = sorted(valid_prices.items(), key=lambda x: x[1])
+losers = sorted_by_price[:5]
+winners = sorted_by_price[-5:]
+
+prompt_prices = {}
+for sym in held_symbols:
+    if sym in prices: prompt_prices[sym] = prices[sym]
+for sym, p in losers + winners:
+    prompt_prices[sym] = p
+
+# --- Find Best FREE Model ---
 selected_model = "gemini-3.8-flash"
 try:
     list_res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_KEY}")
@@ -107,20 +111,18 @@ try:
         if candidates:
             candidates.sort(key=lambda m: [int(p) for p in re.findall(r'\d+', m)], reverse=True)
             selected_model = candidates[0]
-except Exception as e:
-    print(f"Model discovery failed: {e}")
+except Exception:
+    pass
 
-# --- 7. Ask the AI ---
-print(f"Asking AI ({persona_choice}) for a decision...")
+# --- Ask the AI ---
 prompt = (
     f"You are {persona} "
-    f"Your Portfolio: {json.dumps(portfolio_summary)}. "
-    f"Your Current Holdings: {json.dumps(current_positions)}. "
-    f"Current Prices for major stocks: {json.dumps(prices)}. "
-    f"YOUR RECENT PAST TRADES: {json.dumps(recent_history)}. "
-    "Reflect on your recent trades. If a past trade lost money, do not repeat it. If it made money, consider doubling down. "
-    "Decide to buy, sell, or hold ONE stock. If buying/selling, choose a dollar amount up to $2000. "
-    "Respond ONLY with a valid JSON object matching this schema: {\"action\": \"buy\"|\"sell\"|\"hold\", \"symbol\": \"...\", \"amount\": 500, \"reason\": \"...\"}"
+    f"Portfolio: {json.dumps(portfolio_summary)}. "
+    f"Holdings: {json.dumps(current_positions)}. "
+    f"Recent Trades: {json.dumps(recent_history)}. "
+    f"Market Snapshot (Your holdings + Top Winners/Losers): {json.dumps(prompt_prices)}. "
+    "Reflect on your past trades. Decide to buy, sell, or hold ONE stock. If buying/selling, choose an amount up to $2000. "
+    "Respond ONLY with a valid JSON object: {\"action\": \"buy\"|\"sell\"|\"hold\", \"symbol\": \"...\", \"amount\": 500, \"reason\": \"...\"}"
 )
 
 fallback_models = [selected_model, "gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
@@ -128,72 +130,50 @@ ai_response = None
 
 for model_to_try in fallback_models:
     try:
-        print(f"Attempting with {model_to_try}...")
         res = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_try}:generateContent?key={GEMINI_KEY}",
             json={
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"response_mime_type": "application/json"} 
             },
-            timeout=45
+            timeout=30 # Can be lower now because the prompt is much smaller
         )
         data = res.json()
         if 'error' not in data:
             ai_response = data
             selected_model = model_to_try
-            print(f"Success with {model_to_try}!")
             break
-    except Exception as e:
-        print(f"Error with {model_to_try}: {e}")
+    except Exception:
         continue
 
-# --- 8. Parse and Execute ---
+# --- Parse and Execute ---
 try:
-    if not ai_response:
-        raise Exception("All models failed or timed out.")
+    if not ai_response: raise Exception("Timeout")
     raw_text = ai_response['candidates'][0]['content']['parts'][0]['text']
-    start = raw_text.find('{')
-    end = raw_text.rfind('}')
-    clean_json = raw_text[start:end+1]
-    decision = json.loads(clean_json)
-    print(f"Decision: {decision}")
+    start, end = raw_text.find('{'), raw_text.rfind('}')
+    decision = json.loads(raw_text[start:end+1])
 except Exception as e:
     decision = {"action": "hold", "reason": f"Parse error: {e}"}
-    print(f"Parse Error: {e}")
 
 if decision.get("action") in ["buy", "sell"]:
-    print(f"Executing {decision['action']} for {decision['symbol']}...")
     try:
-        requests.post("https://paper-api.alpaca.markets/v2/orders",
-                      headers=headers,
-                      json={
-                          "symbol": decision["symbol"],
-                          "notional": str(decision.get("amount", 100)),
-                          "side": decision["action"],
-                          "type": "market",
-                          "time_in_force": "day"
-                      })
+        requests.post("https://paper-api.alpaca.markets/v2/orders", headers=headers,
+                      json={"symbol": decision["symbol"], "notional": str(decision.get("amount", 100)),
+                            "side": decision["action"], "type": "market", "time_in_force": "day"})
     except Exception as e:
         decision["reason"] += f" (Exec error: {e})"
 
-# --- 9. Save to Log ---
+# --- Save to Log ---
 log_entry = {
     "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-    "model": selected_model,
-    "persona": persona_choice,
-    "account": portfolio_summary,
-    "positions": current_positions,
-    "decision": decision
+    "model": selected_model, "persona": persona_choice,
+    "account": portfolio_summary, "positions": current_positions, "decision": decision
 }
 
 existing_log = []
 if os.path.exists("log.json"):
-    with open("log.json", "r") as f:
-        existing_log = json.load(f)
+    with open("log.json", "r") as f: existing_log = json.load(f)
 
 existing_log.insert(0, log_entry)
 with open("log.json", "w") as f:
-    # Keeping 100 entries for a longer chart (approx 16 days at 6 runs/day)
     json.dump(existing_log[:100], f, indent=2)
-
-print("Bot run complete.")
