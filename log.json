@@ -1,5 +1,18 @@
 [
   {
+    "timestamp": "2026-10-22T13:14:36.195072Z",
+    "model": "gemma-4-31b-it",
+    "decision": {
+      "action": "hold",
+      "reason": "AI error: Expecting value: line 1 column 1 (char 0)"
+    },
+    "prices": {
+      "AAPL": 343.85,
+      "NVDA": 216.89,
+      "TSLA": 372.35
+    }
+  },
+  {
     "timestamp": "2026-10-22T13:10:20.178696Z",
     "model": "gemini-4-argon",
     "decision": {
