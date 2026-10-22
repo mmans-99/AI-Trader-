@@ -39,7 +39,7 @@ ALPACA_SECRET = os.environ["ALPACA_SECRET"]
 GEMINI_KEY = os.environ["GEMINI_KEY"]
 headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
 
-# --- 3. Fetch Market Data for ALL stocks ---
+# --- 3. Fetch Market Data ---
 print("Fetching market data...")
 prices = {}
 for sym in ALL_SYMBOLS:
@@ -73,7 +73,25 @@ if isinstance(positions_raw, list):
             "unrealized_pl": round(float(p["unrealized_pl"]), 2)
         })
 
-# --- 5. Find Best FREE Model ---
+# --- 5. Extract Recent Memory for "Learning" ---
+print("Reading recent memory...")
+recent_history = []
+if os.path.exists("log.json"):
+    try:
+        with open("log.json", "r") as f:
+            past_logs = json.load(f)
+            # Grab the last 3 decisions to avoid token bloat
+            for past in past_logs[:3]:
+                if "decision" in past and past["decision"]["action"] != "hold":
+                    recent_history.append({
+                        "action": past["decision"]["action"],
+                        "symbol": past["decision"].get("symbol"),
+                        "reason": past["decision"].get("reason")
+                    })
+    except Exception as e:
+        print(f"Could not read memory: {e}")
+
+# --- 6. Find Best FREE Model ---
 print("Finding best available Gemini model...")
 selected_model = "gemini-3.8-flash"
 try:
@@ -92,13 +110,15 @@ try:
 except Exception as e:
     print(f"Model discovery failed: {e}")
 
-# --- 6. Ask the AI ---
+# --- 7. Ask the AI ---
 print(f"Asking AI ({persona_choice}) for a decision...")
 prompt = (
     f"You are {persona} "
     f"Your Portfolio: {json.dumps(portfolio_summary)}. "
     f"Your Current Holdings: {json.dumps(current_positions)}. "
     f"Current Prices for major stocks: {json.dumps(prices)}. "
+    f"YOUR RECENT PAST TRADES: {json.dumps(recent_history)}. "
+    "Reflect on your recent trades. If a past trade lost money, do not repeat it. If it made money, consider doubling down. "
     "Decide to buy, sell, or hold ONE stock. If buying/selling, choose a dollar amount up to $2000. "
     "Respond ONLY with a valid JSON object matching this schema: {\"action\": \"buy\"|\"sell\"|\"hold\", \"symbol\": \"...\", \"amount\": 500, \"reason\": \"...\"}"
 )
@@ -115,7 +135,7 @@ for model_to_try in fallback_models:
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"response_mime_type": "application/json"} 
             },
-            timeout=45  # Increased timeout to allow for complex reasoning
+            timeout=45
         )
         data = res.json()
         if 'error' not in data:
@@ -125,9 +145,9 @@ for model_to_try in fallback_models:
             break
     except Exception as e:
         print(f"Error with {model_to_try}: {e}")
-        continue # If it times out, try the next model
+        continue
 
-# --- 7. Parse and Execute ---
+# --- 8. Parse and Execute ---
 try:
     if not ai_response:
         raise Exception("All models failed or timed out.")
@@ -156,7 +176,7 @@ if decision.get("action") in ["buy", "sell"]:
     except Exception as e:
         decision["reason"] += f" (Exec error: {e})"
 
-# --- 8. Save to Log ---
+# --- 9. Save to Log ---
 log_entry = {
     "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
     "model": selected_model,
@@ -173,6 +193,7 @@ if os.path.exists("log.json"):
 
 existing_log.insert(0, log_entry)
 with open("log.json", "w") as f:
-    json.dump(existing_log[:50], f, indent=2)
+    # Keeping 100 entries for a longer chart (approx 16 days at 6 runs/day)
+    json.dump(existing_log[:100], f, indent=2)
 
 print("Bot run complete.")
