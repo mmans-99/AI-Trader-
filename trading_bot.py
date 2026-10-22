@@ -1,6 +1,6 @@
 import os, json, requests, datetime, re
 
-# --- 1. Load Configuration (with # support) ---
+# --- 1. Load Configuration ---
 persona_choice = "Aggressive Growth"
 try:
     with open("config.json", "r") as f:
@@ -32,8 +32,7 @@ ALPACA_SECRET = os.environ["ALPACA_SECRET"]
 GEMINI_KEY = os.environ["GEMINI_KEY"]
 headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
 
-# --- Fetch Market Data ---
-print("Fetching market data...")
+# --- 2. Fetch Market Data ---
 prices = {}
 for sym in ALL_SYMBOLS:
     try:
@@ -43,7 +42,7 @@ for sym in ALL_SYMBOLS:
     except:
         pass
 
-# --- Get Account & Live Positions ---
+# --- 3. Get Account & Live Positions ---
 acct_raw = requests.get("https://paper-api.alpaca.markets/v2/account", headers=headers).json()
 positions_raw = requests.get("https://paper-api.alpaca.markets/v2/positions", headers=headers).json()
 
@@ -67,7 +66,7 @@ if isinstance(positions_raw, list):
             "unrealized_pl": round(float(p["unrealized_pl"]), 2)
         })
 
-# --- Extract Recent Memory ---
+# --- 4. Extract Memory ---
 recent_history = []
 if os.path.exists("log.json"):
     try:
@@ -83,8 +82,7 @@ if os.path.exists("log.json"):
     except Exception:
         pass
 
-# --- OPTIMIZATION: Filter prices to keep the prompt small ---
-# Only send the AI the stocks it owns + the 5 biggest winners + 5 biggest losers
+# --- 5. Filter prices (Keep prompt small) ---
 valid_prices = {k: v for k, v in prices.items() if v > 0}
 sorted_by_price = sorted(valid_prices.items(), key=lambda x: x[1])
 losers = sorted_by_price[:5]
@@ -96,7 +94,7 @@ for sym in held_symbols:
 for sym, p in losers + winners:
     prompt_prices[sym] = p
 
-# --- Find Best FREE Model ---
+# --- 6. Find Model ---
 selected_model = "gemini-3.8-flash"
 try:
     list_res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_KEY}")
@@ -114,7 +112,7 @@ try:
 except Exception:
     pass
 
-# --- Ask the AI ---
+# --- 7. Ask the AI ---
 prompt = (
     f"You are {persona} "
     f"Portfolio: {json.dumps(portfolio_summary)}. "
@@ -128,7 +126,9 @@ prompt = (
 fallback_models = [selected_model, "gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
 ai_response = None
 
+print("--- STARTING AI CALLS ---")
 for model_to_try in fallback_models:
+    print(f"Attempting model: {model_to_try}...")
     try:
         res = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_try}:generateContent?key={GEMINI_KEY}",
@@ -136,34 +136,41 @@ for model_to_try in fallback_models:
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"response_mime_type": "application/json"} 
             },
-            timeout=30 # Can be lower now because the prompt is much smaller
+            timeout=60 # Increased to 60 seconds!
         )
+        
+        # Print the exact raw response so we can see it in GitHub logs
         data = res.json()
+        print(f"Raw API Response from {model_to_try}: {data}")
+        
         if 'error' not in data:
             ai_response = data
             selected_model = model_to_try
+            print(f"Success! Using {model_to_try}")
             break
-    except Exception:
-        continue
+        else:
+            print(f"API Error: {data['error']}")
+            
+    except Exception as e:
+        print(f"Network/Timeout Exception for {model_to_try}: {e}")
 
-# --- Parse and Execute ---
+# --- 8. Parse ---
 try:
-    if not ai_response: raise Exception("Timeout")
+    if not ai_response: raise Exception("All models failed or timed out.")
     raw_text = ai_response['candidates'][0]['content']['parts'][0]['text']
     start, end = raw_text.find('{'), raw_text.rfind('}')
     decision = json.loads(raw_text[start:end+1])
+    print(f"DECISION: {decision}")
 except Exception as e:
     decision = {"action": "hold", "reason": f"Parse error: {e}"}
+    print(f"FINAL ERROR: {e}")
 
+# --- 9. Execute & Save ---
 if decision.get("action") in ["buy", "sell"]:
-    try:
-        requests.post("https://paper-api.alpaca.markets/v2/orders", headers=headers,
-                      json={"symbol": decision["symbol"], "notional": str(decision.get("amount", 100)),
-                            "side": decision["action"], "type": "market", "time_in_force": "day"})
-    except Exception as e:
-        decision["reason"] += f" (Exec error: {e})"
+    requests.post("https://paper-api.alpaca.markets/v2/orders", headers=headers,
+                  json={"symbol": decision["symbol"], "notional": str(decision.get("amount", 100)),
+                        "side": decision["action"], "type": "market", "time_in_force": "day"})
 
-# --- Save to Log ---
 log_entry = {
     "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
     "model": selected_model, "persona": persona_choice,
