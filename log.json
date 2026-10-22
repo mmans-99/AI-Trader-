@@ -1,0 +1,14 @@
+[
+  {
+    "timestamp": "2026-10-22T12:47:48.157106Z",
+    "decision": {
+      "action": "hold",
+      "reason": "AI response parsing error: 'candidates'"
+    },
+    "prices": {
+      "AAPL": 343.81,
+      "NVDA": 216.91,
+      "TSLA": 371.82
+    }
+  }
+]
