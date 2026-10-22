@@ -39,7 +39,8 @@ ALPACA_SECRET = os.environ["ALPACA_SECRET"]
 GEMINI_KEY = os.environ["GEMINI_KEY"]
 headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
 
-# --- 3. Fetch Market Data for ALL stocks (so it can pick anything) ---
+# --- 3. Fetch Market Data for ALL stocks ---
+print("Fetching market data...")
 prices = {}
 for sym in ALL_SYMBOLS:
     try:
@@ -50,6 +51,7 @@ for sym in ALL_SYMBOLS:
         pass
 
 # --- 4. Get Account & Live Positions ---
+print("Fetching account and positions...")
 acct_raw = requests.get("https://paper-api.alpaca.markets/v2/account", headers=headers).json()
 positions_raw = requests.get("https://paper-api.alpaca.markets/v2/positions", headers=headers).json()
 
@@ -72,6 +74,7 @@ if isinstance(positions_raw, list):
         })
 
 # --- 5. Find Best FREE Model ---
+print("Finding best available Gemini model...")
 selected_model = "gemini-3.8-flash"
 try:
     list_res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_KEY}")
@@ -86,10 +89,11 @@ try:
         if candidates:
             candidates.sort(key=lambda m: [int(p) for p in re.findall(r'\d+', m)], reverse=True)
             selected_model = candidates[0]
-except Exception:
-    pass
+except Exception as e:
+    print(f"Model discovery failed: {e}")
 
 # --- 6. Ask the AI ---
+print(f"Asking AI ({persona_choice}) for a decision...")
 prompt = (
     f"You are {persona} "
     f"Your Portfolio: {json.dumps(portfolio_summary)}. "
@@ -103,33 +107,42 @@ fallback_models = [selected_model, "gemini-3.8-flash", "gemini-2.5-flash", "gemi
 ai_response = None
 
 for model_to_try in fallback_models:
-    res = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_try}:generateContent?key={GEMINI_KEY}",
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"response_mime_type": "application/json"} 
-        },
-        timeout=15
-    )
-    data = res.json()
-    if 'error' not in data:
-        ai_response = data
-        selected_model = model_to_try
-        break
+    try:
+        print(f"Attempting with {model_to_try}...")
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_try}:generateContent?key={GEMINI_KEY}",
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"response_mime_type": "application/json"} 
+            },
+            timeout=45  # Increased timeout to allow for complex reasoning
+        )
+        data = res.json()
+        if 'error' not in data:
+            ai_response = data
+            selected_model = model_to_try
+            print(f"Success with {model_to_try}!")
+            break
+    except Exception as e:
+        print(f"Error with {model_to_try}: {e}")
+        continue # If it times out, try the next model
 
 # --- 7. Parse and Execute ---
 try:
     if not ai_response:
-        raise Exception("All models failed.")
+        raise Exception("All models failed or timed out.")
     raw_text = ai_response['candidates'][0]['content']['parts'][0]['text']
     start = raw_text.find('{')
     end = raw_text.rfind('}')
     clean_json = raw_text[start:end+1]
     decision = json.loads(clean_json)
+    print(f"Decision: {decision}")
 except Exception as e:
     decision = {"action": "hold", "reason": f"Parse error: {e}"}
+    print(f"Parse Error: {e}")
 
 if decision.get("action") in ["buy", "sell"]:
+    print(f"Executing {decision['action']} for {decision['symbol']}...")
     try:
         requests.post("https://paper-api.alpaca.markets/v2/orders",
                       headers=headers,
@@ -149,7 +162,7 @@ log_entry = {
     "model": selected_model,
     "persona": persona_choice,
     "account": portfolio_summary,
-    "positions": current_positions, # Saved for the dashboard!
+    "positions": current_positions,
     "decision": decision
 }
 
@@ -160,4 +173,6 @@ if os.path.exists("log.json"):
 
 existing_log.insert(0, log_entry)
 with open("log.json", "w") as f:
-    json.dump(existing_log[:50], f, indent=2) # Keep last 50 runs for the graph
+    json.dump(existing_log[:50], f, indent=2)
+
+print("Bot run complete.")
