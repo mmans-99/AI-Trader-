@@ -1,5 +1,61 @@
 [
   {
+    "timestamp": "2026-10-27T09:29:59.776917Z",
+    "model": "gemma-4-31b-it",
+    "persona": "Aggressive Growth",
+    "account": {
+      "cash": 88900.05,
+      "portfolio_value": 100190.11,
+      "total_profit_loss": 190.11
+    },
+    "positions": [
+      {
+        "symbol": "AAPL",
+        "qty": "0.289826086",
+        "avg_price": 345.0,
+        "current_price": 343.25,
+        "market_value": 99.48,
+        "unrealized_pl": -0.51
+      },
+      {
+        "symbol": "AMD",
+        "qty": "3.896273642",
+        "avg_price": 513.31,
+        "current_price": 532.0,
+        "market_value": 2072.82,
+        "unrealized_pl": 72.83
+      },
+      {
+        "symbol": "META",
+        "qty": "3.149021338",
+        "avg_price": 635.11,
+        "current_price": 630.44,
+        "market_value": 1985.27,
+        "unrealized_pl": -14.72
+      },
+      {
+        "symbol": "NVDA",
+        "qty": "23.331255561",
+        "avg_price": 214.3,
+        "current_price": 216.06,
+        "market_value": 5040.95,
+        "unrealized_pl": 40.98
+      },
+      {
+        "symbol": "TSLA",
+        "qty": "5.293423003",
+        "avg_price": 377.83,
+        "current_price": 395.12,
+        "market_value": 2091.54,
+        "unrealized_pl": 91.55
+      }
+    ],
+    "decision": {
+      "action": "hold",
+      "reason": "Parse error: Expecting value: line 1 column 1 (char 0)"
+    }
+  },
+  {
     "timestamp": "2026-10-27T03:08:17.126081Z",
     "model": "gemma-4-31b-it",
     "persona": "Aggressive Growth",
