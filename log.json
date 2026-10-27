@@ -1,5 +1,61 @@
 [
   {
+    "timestamp": "2026-10-27T23:26:01.963973Z",
+    "model": "gemma-4-31b-it",
+    "persona": "Aggressive Growth",
+    "account": {
+      "cash": 88900.05,
+      "portfolio_value": 100365.9,
+      "total_profit_loss": 365.9
+    },
+    "positions": [
+      {
+        "symbol": "AAPL",
+        "qty": "0.289826086",
+        "avg_price": 345.0,
+        "current_price": 347.29,
+        "market_value": 100.65,
+        "unrealized_pl": 0.66
+      },
+      {
+        "symbol": "AMD",
+        "qty": "3.896273642",
+        "avg_price": 513.31,
+        "current_price": 560.51,
+        "market_value": 2183.9,
+        "unrealized_pl": 183.91
+      },
+      {
+        "symbol": "META",
+        "qty": "3.149021338",
+        "avg_price": 635.11,
+        "current_price": 620.0,
+        "market_value": 1952.39,
+        "unrealized_pl": -47.6
+      },
+      {
+        "symbol": "NVDA",
+        "qty": "23.331255561",
+        "avg_price": 214.3,
+        "current_price": 217.37,
+        "market_value": 5071.52,
+        "unrealized_pl": 71.55
+      },
+      {
+        "symbol": "TSLA",
+        "qty": "5.293423003",
+        "avg_price": 377.83,
+        "current_price": 407.56,
+        "market_value": 2157.39,
+        "unrealized_pl": 157.4
+      }
+    ],
+    "decision": {
+      "action": "hold",
+      "reason": "Parse error: All models failed or timed out."
+    }
+  },
+  {
     "timestamp": "2026-10-27T17:08:46.448667Z",
     "model": "gemma-4-31b-it",
     "persona": "Aggressive Growth",
